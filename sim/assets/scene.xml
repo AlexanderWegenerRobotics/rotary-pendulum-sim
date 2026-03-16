@@ -1,0 +1,72 @@
+<mujoco model="dp_scene">
+
+  <statistic center="0.3 0 0.5" extent="1.5"/>
+
+  <option timestep="0.001" gravity="0 0 -9.81" integrator="RK4"/>
+
+  <visual>
+    <global offwidth="1280" offheight="960" azimuth="140" elevation="-25"/>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient"
+             rgb1="0.3 0.5 0.7" rgb2="0 0 0"
+             width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge"
+             rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8"
+             width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true"
+              texrepeat="5 5" reflectance="0.2"/>
+  </asset>
+
+  <default>
+    <joint damping="0.005" armature="0.002" frictionloss="0.001"/>
+    <geom contype="0" conaffinity="0"/>
+  </default>
+
+  <worldbody>
+    <light pos="0 0 2.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+
+    <!-- Base element -->
+    <body name="base" pos="0 0 0.8" euler="0 90 0">
+      <geom name="mount" type="cylinder" size="0.04 0.03" rgba="0.25 0.25 0.25 1" mass="0.0"/>
+
+      <!-- first link -->
+      <body name="link1" pos="0 0 0">
+        <joint name="joint1" type="hinge" axis="0 0 1" pos="0 0 0"/>
+        <geom name="link1_rod" type="capsule" fromto="0.01 0 0  0.30 0 0" size="0.015" mass="0.50" rgba="0.45 0.65 0.85 1"/>
+        <inertial pos="0.15 0 0" mass="0.50" diaginertia="0.00010 0.00385 0.00385"/>
+
+        <!-- second link -->
+        <body name="link2" pos="0.30 0 0">
+          <joint name="joint2" type="hinge" axis="0 0 1" pos="0 0 0"/>
+          <geom name="link2_rod" type="capsule" fromto="0.01 0 0  0.30 0 0" size="0.012" mass="0.30" rgba="0.85 0.45 0.35 1"/>
+          <inertial pos="0.15 0 0" mass="0.30" diaginertia="0.00006 0.00231 0.00231"/>
+          <geom name="tip" type="sphere" size="0.018" pos="0.30 0 0" rgba="1.0 0.85 0.1 1" mass="0"/>
+        </body>
+
+      </body>
+    </body>
+
+    <!-- Debug axes -->
+    <geom type="capsule" fromto="0 0 0 0.3 0 0" size="0.005" rgba="1 0 0 1" contype="0" conaffinity="0"/>
+    <geom type="capsule" fromto="0 0 0 0 0.3 0" size="0.005" rgba="0 1 0 1" contype="0" conaffinity="0"/>
+    <geom type="capsule" fromto="0 0 0 0 0 0.3" size="0.005" rgba="0 0 1 1" contype="0" conaffinity="0"/>
+
+  </worldbody>
+
+  <actuator>
+    <motor name="torque1" joint="joint1" gear="1" ctrllimited="false"/>
+  </actuator>
+
+  <sensor>
+    <jointpos name="q1"  joint="joint1"/>
+    <jointpos name="q2"  joint="joint2"/>
+    <jointvel name="dq1" joint="joint1"/>
+    <jointvel name="dq2" joint="joint2"/>
+  </sensor>
+
+</mujoco>
