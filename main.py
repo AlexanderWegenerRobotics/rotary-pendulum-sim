@@ -14,7 +14,7 @@ if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
 
     config = load_config()
-    controller = SpringController(config, kp=0.0, kd=0.0)
+    controller = SpringController(config, kp=0.0, kd=2.0)
 
     env = DoublePendulum(config, controller)
     env.run()
