@@ -28,10 +28,10 @@ python -m ipykernel install --user --name dp-control --display-name "dp-control"
 root/
 ├── main.py                  # entry point
 ├── config.yaml              # simulation and test configuration
-├── test_cases.yaml          # scenario definitions (noise, limits, perturbations)
 ├── requirements.txt
 ├── model/
-│   └── scene.xml            # MuJoCo model (include double_pendulum.xml)
+│   ├── scene.xml            # MuJoCo model (includes double_pendulum.xml)
+│   └── double_pendulum.xml  # actual pendelum model
 ├── analysis/
 │   └── general_analysis.ipynb
 ├── controller/
@@ -42,6 +42,7 @@ root/
     ├── simulation.py
     ├── logger.py
     ├── metrics.py
+    ├── test_cases.yaml          # scenario definitions (noise, limits, perturbations)
     └── system_params.py
 ```
 
