@@ -9,9 +9,10 @@ class SpringController(BaseController):
         super().__init__(config)
         self.kp = kp
         self.kd = kd
+        self.torque_limit = config["simulation"].get("torque_limit", np.inf)
 
-    def compute(self, state: np.ndarray, t: float) -> float:
+    def _compute(self, state: np.ndarray, t: float) -> float:
         q1, q2, dq1, dq2 = state
         torque  = self.kp * (0.0 - q1) - self.kd * dq1
         torque += self.kp * (np.pi - q2) - self.kd * dq2
-        return self._clip(torque)
+        return self._clip(torque, self.torque_limit)

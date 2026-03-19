@@ -4,7 +4,7 @@ scenarios:
     level: 1
     description: "Perfect model, no noise"
     noise_std: 0.0
-    torque_limit: 5.0
+    torque_limit: null
     mass_perturbation: 0.0
     impulse_magnitude: 0.0
 

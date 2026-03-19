@@ -19,15 +19,16 @@ def _load_scenario(config: dict) -> dict:
 
 
 class Simulation:
-    def __init__(self, config: dict, shared_state, shared_torque, done_event, controller_name: str):
+    def __init__(self, config: dict, shared_state, shared_torque, shared_solve_time, done_event, controller_name: str):
         self.cfg = config
         self.sim_cfg = config["simulation"]
         self.test_cfg = config["test"]
         self.scenario = _load_scenario(config)
 
-        self.shared_state = shared_state
-        self.shared_torque = shared_torque
-        self.done_event = done_event
+        self.shared_state      = shared_state
+        self.shared_torque     = shared_torque
+        self.shared_solve_time = shared_solve_time
+        self.done_event        = done_event
 
         self.model = mujoco.MjModel.from_xml_path(self.sim_cfg["model_path"])
         self.data = mujoco.MjData(self.model)
@@ -42,7 +43,7 @@ class Simulation:
         self.video_log = self.sim_cfg.get("video_log", False)
         self.duration = self.test_cfg["duration"]
 
-        self.torque_limit     = self.scenario["torque_limit"]
+        self.torque_limit     = self.scenario["torque_limit"] or np.inf
         self.noise_std        = self.scenario.get("noise_std", 0.0)
         self.impulse_mag      = self.scenario.get("impulse_magnitude", 0.0)
         self.impulse_times    = self.test_cfg.get("impulse_times", [])
@@ -112,7 +113,10 @@ class Simulation:
             with self.shared_state.get_lock():
                 np.frombuffer(self.shared_state.get_obj(), dtype=np.float64)[:] = noisy_state
 
-            self.logger.log_step(self.data.time, state[:4], self.data.ctrl[0])
+            with self.shared_solve_time.get_lock():
+                solve_time = self.shared_solve_time.value
+
+            self.logger.log_step(self.data.time, state[:4], self.data.ctrl[0], solve_time)
 
             deadline = t_wall_start + self.data.time
             remaining = deadline - time.perf_counter()
