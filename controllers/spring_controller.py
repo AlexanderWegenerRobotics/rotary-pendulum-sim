@@ -11,6 +11,7 @@ class SpringController(BaseController):
         self.kd = kd
 
     def compute(self, state: np.ndarray, t: float) -> float:
-        q2, dq2 = state[1], state[3]
-        torque = self.kp * (np.pi - q2) - self.kd * dq2
+        q1, q2, dq1, dq2 = state
+        torque  = self.kp * (0.0 - q1) - self.kd * dq1
+        torque += self.kp * (np.pi - q2) - self.kd * dq2
         return self._clip(torque)
