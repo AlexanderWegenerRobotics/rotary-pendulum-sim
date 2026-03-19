@@ -1,0 +1,15 @@
+simulation:
+  model_path: "model/scene.xml"
+  headless: false
+  render_width: 1280
+  render_height: 720
+  render_fps: 20
+  physics_hz: 500
+  log_path: "log/"
+  video_log: true
+  torque_limit: 5.0
+
+test:
+  name: "stabilize_upright"
+  duration: 10.0
+  initial_state: [0.0, 3.1, 0.0, 0.0]
