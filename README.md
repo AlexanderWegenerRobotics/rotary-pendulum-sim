@@ -60,7 +60,7 @@ conda activate dp-control
 python main.py
 ```
 
-Logs are written to `log/` automatically. Each run produces a `.h5` trajectory file and a `_meta.json` sidecar.
+Logs are written to `log/` automatically. Each run produces a `.h5` trajectory file, a `_meta.json` sidecar, and optionally an `.mp4` video recording if `video_log: true` is set in `config.yaml`.
 
 Press `q` in the render window to stop early. Set `headless: true` in `config.yaml` to run without rendering (recommended on Raspberry Pi).
 
