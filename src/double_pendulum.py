@@ -44,16 +44,8 @@ class DoublePendulum:
         done_event = mp.Event()
         controller_name = type(self.controller).__name__
 
-        sim_proc = mp.Process(
-            target=_sim_process,
-            args=(self.config, shared_state, shared_torque, done_event, controller_name),
-            daemon=True,
-        )
-        ctrl_proc = mp.Process(
-            target=_control_process,
-            args=(self.controller, self.config, shared_state, shared_torque, done_event),
-            daemon=True,
-        )
+        sim_proc = mp.Process(target=_sim_process, args=(self.config, shared_state, shared_torque, done_event, controller_name), daemon=True)
+        ctrl_proc = mp.Process(target=_control_process, args=(self.controller, self.config, shared_state, shared_torque, done_event), daemon=True)
 
         sim_proc.start()
         ctrl_proc.start()

@@ -10,6 +10,6 @@ simulation:
   torque_limit: 5.0
 
 test:
-  name: "stabilize_upright"
+  name: "mismatch_high"
   duration: 10.0
   initial_state: [1.57079632679, 0.0, 0.0, 0.0]
