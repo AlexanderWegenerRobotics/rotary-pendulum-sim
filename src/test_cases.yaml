@@ -1,0 +1,105 @@
+scenarios:
+
+  nominal:
+    level: 1
+    description: "Perfect model, no noise"
+    noise_std: 0.0
+    torque_limit: 5.0
+    mass_perturbation: 0.0
+    impulse_magnitude: 0.0
+
+  noise_low:
+    level: 2
+    description: "Low sensor noise"
+    noise_std: 0.01
+    torque_limit: 5.0
+    mass_perturbation: 0.0
+    impulse_magnitude: 0.0
+
+  noise_mid:
+    level: 2
+    description: "Medium sensor noise"
+    noise_std: 0.05
+    torque_limit: 5.0
+    mass_perturbation: 0.0
+    impulse_magnitude: 0.0
+
+  noise_high:
+    level: 2
+    description: "High sensor noise"
+    noise_std: 0.10
+    torque_limit: 5.0
+    mass_perturbation: 0.0
+    impulse_magnitude: 0.0
+
+  torque_limit_mid:
+    level: 3
+    description: "Reduced torque saturation"
+    noise_std: 0.0
+    torque_limit: 2.0
+    mass_perturbation: 0.0
+    impulse_magnitude: 0.0
+
+  torque_limit_low:
+    level: 3
+    description: "Severe torque saturation"
+    noise_std: 0.0
+    torque_limit: 1.0
+    mass_perturbation: 0.0
+    impulse_magnitude: 0.0
+
+  mismatch_low:
+    level: 4
+    description: "Link masses +10%"
+    noise_std: 0.0
+    torque_limit: 5.0
+    mass_perturbation: 0.10
+    impulse_magnitude: 0.0
+
+  mismatch_mid:
+    level: 4
+    description: "Link masses +20%"
+    noise_std: 0.0
+    torque_limit: 5.0
+    mass_perturbation: 0.20
+    impulse_magnitude: 0.0
+
+  mismatch_high:
+    level: 4
+    description: "Link masses +30%"
+    noise_std: 0.0
+    torque_limit: 5.0
+    mass_perturbation: 0.30
+    impulse_magnitude: 0.0
+
+  impulse_low:
+    level: 5
+    description: "Small impulse disturbance"
+    noise_std: 0.0
+    torque_limit: 5.0
+    mass_perturbation: 0.0
+    impulse_magnitude: 0.5
+
+  impulse_mid:
+    level: 5
+    description: "Medium impulse disturbance"
+    noise_std: 0.0
+    torque_limit: 5.0
+    mass_perturbation: 0.0
+    impulse_magnitude: 1.0
+
+  impulse_high:
+    level: 5
+    description: "Large impulse disturbance"
+    noise_std: 0.0
+    torque_limit: 5.0
+    mass_perturbation: 0.0
+    impulse_magnitude: 2.0
+
+  combined_stress:
+    level: 6
+    description: "Noise + torque limit + model mismatch"
+    noise_std: 0.05
+    torque_limit: 2.0
+    mass_perturbation: 0.20
+    impulse_magnitude: 0.0
