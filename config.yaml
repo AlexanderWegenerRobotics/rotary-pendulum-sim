@@ -7,7 +7,7 @@ simulation:
   physics_hz: 500
   log_path: "log/"
   video_log: true
-  torque_limit: 5.0
+  torque_limit: 2.0
 
 test:
   scenario: "nominal"
