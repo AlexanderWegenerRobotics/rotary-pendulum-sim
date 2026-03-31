@@ -3,7 +3,7 @@ simulation:
   headless: false
   render_width: 1280
   render_height: 720
-  render_fps: 20
+  render_fps: 60
   physics_hz: 500
   log_path: "log/"
   video_log: true
@@ -11,6 +11,6 @@ simulation:
 
 test:
   scenario: "nominal"
-  duration: 10.0
-  initial_state: [0.05, 3.10, 0.0, 0.0]
+  duration: 6.0
+  initial_state: [1.7208, -0.10, 0.0, 0.0]
   test_cases_path: "src/test_cases.yaml"

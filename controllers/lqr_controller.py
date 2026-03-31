@@ -14,23 +14,27 @@ class LQRController(BaseController):
         self.physics_hz = config["simulation"]["physics_hz"]
         self.dt = 1.0 / self.physics_hz
 
-        # Upright equilibrium in this simulation
-        self.x_ref = np.array([0.0, np.pi, 0.0, 0.0], dtype=float)
+        # Upright equilibrium
+        self.x_ref = np.array([np.pi / 2.0, 0.0, 0.0, 0.0], dtype=float)
         self.u_ref = 0.0
 
-        # Softer LQR weights to reduce aggressiveness
-        self.Q = np.diag([80.0, 120.0, 4.0, 8.0])
-        self.R = np.array([[3.0]])
+        # Tuned weights for visible and stronger stabilization
+        self.Q = np.diag([300.0, 350.0, 18.0, 22.0])
+        self.R = np.array([[0.6]])
 
-        # Load MuJoCo model
+        self._printed_runtime = False
+
         self.model = mujoco.MjModel.from_xml_path(self.model_path)
 
-        # Linearize discrete dynamics around equilibrium
+        # Linearize around upright equilibrium
         self.Ad, self.Bd = self._linearize_discrete(self.x_ref, self.u_ref)
 
         # Solve discrete-time LQR
         self.K = self._solve_dlqr(self.Ad, self.Bd, self.Q, self.R)
 
+        print("LQR initialized")
+        print("x_ref =", self.x_ref)
+        print("u_ref =", self.u_ref)
         print("Ad =\n", self.Ad)
         print("Bd =\n", self.Bd)
         print("K =\n", self.K)
@@ -45,8 +49,7 @@ class LQRController(BaseController):
         data = mujoco.MjData(self.model)
         self._set_state_and_input(data, x, u)
         mujoco.mj_step(self.model, data)
-        x_next = np.concatenate([data.qpos.copy(), data.qvel.copy()])
-        return x_next
+        return np.concatenate([data.qpos.copy(), data.qvel.copy()])
 
     def _linearize_discrete(self, x_eq, u_eq):
         n = 4
@@ -56,7 +59,6 @@ class LQRController(BaseController):
         Ad = np.zeros((n, n))
         Bd = np.zeros((n, 1))
 
-        # Finite-difference w.r.t. state
         for i in range(n):
             dx = np.zeros(n)
             dx[i] = eps_x
@@ -64,7 +66,6 @@ class LQRController(BaseController):
             f_minus = self._step_dynamics(x_eq - dx, u_eq)
             Ad[:, i] = (f_plus - f_minus) / (2.0 * eps_x)
 
-        # Finite-difference w.r.t. input
         f_plus = self._step_dynamics(x_eq, u_eq + eps_u)
         f_minus = self._step_dynamics(x_eq, u_eq - eps_u)
         Bd[:, 0] = (f_plus - f_minus) / (2.0 * eps_u)
@@ -77,26 +78,26 @@ class LQRController(BaseController):
         return K
 
     def _wrap_angle(self, angle):
-        return (angle + np.pi) % (2 * np.pi) - np.pi
+        return (angle + np.pi) % (2.0 * np.pi) - np.pi
 
     def _compute(self, state: np.ndarray, t: float) -> float:
         x = np.array(state, dtype=float)
 
-        # Error around upright equilibrium
         err = x - self.x_ref
         err[0] = self._wrap_angle(err[0])
         err[1] = self._wrap_angle(err[1])
 
-        raw_torque = -float((self.K @ err.reshape(-1, 1)).item())
-        clipped_torque = self._clip(raw_torque, self.torque_limit)
+        u = -float((self.K @ err.reshape(-1, 1)).item())
+        u = self._clip(u, self.torque_limit)
 
-        # Print torque for debugging during first second
-        if t < 1.0:
-            print(
-                f"t={t:.3f}, "
-                f"err={err}, "
-                f"raw={raw_torque:.4f}, "
-                f"clipped={clipped_torque:.4f}"
-            )
+        if (not self._printed_runtime) and (t > 0.02):
+            print("\n----- LQR DEBUG -----")
+            print(f"t      = {t:.3f}")
+            print("state  =", x)
+            print("x_ref  =", self.x_ref)
+            print("err    =", err)
+            print(f"torque = {u:.6f}")
+            print("---------------------\n")
+            self._printed_runtime = True
 
-        return clipped_torque
+        return u
