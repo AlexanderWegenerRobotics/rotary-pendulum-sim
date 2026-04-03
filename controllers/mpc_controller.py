@@ -9,11 +9,12 @@ from src.system_params import SystemParams, get_system_params
 
 class Dynamics:
 
-    def __init__(self, p: SystemParams):
+    def __init__(self, p: SystemParams, armature: float = 0.002):
         self._c_M11  = p.I1 + p.m1*p.lc1**2 + p.I2 + p.m2*(p.l1**2 + p.lc2**2)
         self._c_M12  = p.I2 + p.m2*p.lc2**2
         self._c_M22  = p.I2 + p.m2*p.lc2**2
         self._c_Mcos = p.m2*p.l1*p.lc2
+        self._armature = armature
 
         self._c_h    = p.m2*p.l1*p.lc2
 
@@ -23,9 +24,9 @@ class Dynamics:
     def M(self, q: np.ndarray) -> np.ndarray:
         c2 = np.cos(q[1])
         m_cos = self._c_Mcos * c2
-        M11 = self._c_M11 + 2.0*m_cos
+        M11 = self._c_M11 + 2.0*m_cos + self._armature
         M12 = self._c_M12 + m_cos
-        M22 = self._c_M22
+        M22 = self._c_M22 + self._armature
         return np.array([[M11, M12],
                          [M12, M22]])
 
@@ -43,7 +44,7 @@ class Dynamics:
 
     def forward(self, q: np.ndarray, dq: np.ndarray, u: float) -> np.ndarray:
         Bu  = np.array([u, 0.0])
-        rhs = Bu - self.C(q, dq) @ dq - self.g(q)
+        rhs = Bu - self.C(q, dq) @ dq + self.g(q)
         return np.linalg.solve(self.M(q), rhs)
 
 
@@ -56,17 +57,18 @@ class MPCController(BaseController):
         self.params       = get_system_params(config=config)
         self.dynamics     = Dynamics(self.params)
 
-        self.K     = 512
-        self.N     = 40
+        self.K     = 1024
+        self.N     = 100
         self.dt    = 0.02
-        self.lam = 5000.0
-        self.sigma = 0.5
+        self.lam = 20
+        self.sigma = 1.5
 
-        self._Q    = np.diag([5.0, 20.0, 0.1, 0.5])
+        self._Q    = np.diag([50.0, 10.0, 10.0, 10.0])
+        self._Q *= 1.0
         self._Qf   = 10.0 * self._Q
         self._r    = 0.01
 
-        self._goal  = np.array([np.pi/2, 0.0, 0.0, 0.0])
+        self._goal  = np.array([-np.pi/2, 0.0, 0.0, 0.0])
         self._U_nom = np.zeros(self.N)
 
     def _batch_forward(self, q: np.ndarray, dq: np.ndarray, u: np.ndarray) -> np.ndarray:
@@ -75,9 +77,9 @@ class MPCController(BaseController):
         c1, c12  = np.cos(q[:, 0]), np.cos(q[:, 0] + q[:, 1])
 
         m_cos = d._c_Mcos * c2
-        M11   = d._c_M11 + 2.0*m_cos
+        M11   = d._c_M11 + 2.0*m_cos + d._armature
         M12   = d._c_M12 + m_cos
-        M22   = d._c_M22
+        M22   = d._c_M22 + d._armature
 
         det   = M11*M22 - M12**2
 
@@ -90,8 +92,8 @@ class MPCController(BaseController):
         g1    = d._c_g1a*c1 + d._c_g2*c12
         g2    = d._c_g2*c12
 
-        rhs0  = u   - Cdq0 - g1
-        rhs1  = 0.0 - Cdq1 - g2
+        rhs0  = u   - Cdq0 + g1
+        rhs1  = 0.0 - Cdq1 + g2
 
         qdd0  = ( M22*rhs0 - M12*rhs1) / det
         qdd1  = (-M12*rhs0 + M11*rhs1) / det
@@ -116,6 +118,7 @@ class MPCController(BaseController):
         q_next  = q  + (dt/6.0)*(k1_dq  + 2.0*k2_dq  + 2.0*k3_dq  + k4_dq)
         dq_next = dq + (dt/6.0)*(k1_ddq + 2.0*k2_ddq + 2.0*k3_ddq + k4_ddq)
 
+        np.clip(dq_next, -50.0, 50.0, out=dq_next)
         return q_next, dq_next
 
     def _rollout(self, state: np.ndarray, V: np.ndarray) -> np.ndarray:
@@ -125,11 +128,13 @@ class MPCController(BaseController):
         costs = np.zeros(self.K)
 
         for t in range(self.N):
-            u          = np.clip(V[:, t], -self.torque_limit, self.torque_limit)
-            q, dq      = self._rk4_step(q, dq, u)
-            costs     += self._running_cost(q, dq, V[:, t])
+            u     = np.clip(V[:, t], -self.torque_limit, self.torque_limit)
+            q, dq = self._rk4_step(q, dq, u)
+            costs += self._running_cost(q, dq, V[:, t])
 
         costs += self._terminal_cost(q, dq)
+        np.clip(costs, 0.0, 1e6, out=costs)
+        np.nan_to_num(costs, nan=1e6, posinf=1e6, neginf=0.0, copy=False)
         return costs
 
     def _state_error(self, q: np.ndarray, dq: np.ndarray) -> np.ndarray:
