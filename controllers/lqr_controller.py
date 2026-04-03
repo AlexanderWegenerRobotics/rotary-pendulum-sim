@@ -19,8 +19,8 @@ class LQRController(BaseController):
         self.u_ref = 0.0
 
         # Tuned weights for visible and stronger stabilization
-        self.Q = np.diag([300.0, 350.0, 18.0, 22.0])
-        self.R = np.array([[0.6]])
+        self.Q = np.diag([120.0, 140.0, 8.0, 10.0])
+        self.R = np.array([[2.5]])
 
         self._printed_runtime = False
 
