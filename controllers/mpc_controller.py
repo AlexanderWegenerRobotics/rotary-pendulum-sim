@@ -75,22 +75,27 @@ class MPCController(BaseController):
         self.params       = get_system_params(config=config)
         self.dynamics     = Dynamics(self.params)
 
-        self.K     = 800
-        self.N     = 100
-        self.dt    = 0.002
-        self.lam = 200
+        self._goal  = np.array([np.pi/2, 0.0, 0.0, 0.0])
+        self.K     = 600
+        self.dt    = 0.004
+        self.lam = 10.0
         self.sigma = 0.9
-
-        self._Q    = np.diag([10.0, 20.0, 2.0, 5.0])
-        self._Qf   = 10.0 * self._Q
-        self._r    = 0.001
-
-        self._wE = 0.05
+        self.N_roll = 500
+        self.block_size = 5
+        self._wE = 5.0
         self._alpha_E = 2.0
+
+        self._Q    = np.diag([10.0, 20.0, 5.0, 10.0])
+        self._Qf   = 10.0 * self._Q
+        self._r    = 0.05
+        
+        self.N_ctrl = int(np.ceil(self.N_roll / self.block_size))
+        self._U_nom = np.zeros(self.N_ctrl)
+        self._block_step = 0
+        self._u_current = 0.0
         self._use_energy_gate = True
 
-        self._goal  = np.array([np.pi/2, 0.0, 0.0, 0.0])
-        self._U_nom = np.zeros(self.N)
+        self._U_nom = np.zeros(self.N_ctrl)
         self._E_goal = self.dynamics.goal_energy(self._goal)
 
         self.compute_times = []
@@ -110,21 +115,30 @@ class MPCController(BaseController):
 
         np.clip(dq_next, -50.0, 50.0, out=dq_next)
         return q_next, dq_next
+    
+    def _euler_step(self, q: np.ndarray, dq: np.ndarray, u: np.ndarray)-> tuple[np.ndarray, np.ndarray]:
+        ddq = self.dynamics.forward(q, dq, u)
+        dq_next = dq + self.dt * ddq
+        q_next = q + self.dt * dq_next
+        np.clip(dq_next, -50.0, 50.0, out=dq_next)
+        return q_next, dq_next
 
     def _rollout(self, state: np.ndarray, V: np.ndarray) -> np.ndarray:
-        q  = np.tile(state[:2], (self.K, 1))
+        q = np.tile(state[:2], (self.K, 1))
         dq = np.tile(state[2:], (self.K, 1))
 
         costs = np.zeros(self.K)
 
-        for t in range(self.N):
-            u     = np.clip(V[:, t], -self.torque_limit, self.torque_limit)
+        for t in range(self.N_roll):
+            j = t // self.block_size
+            u = np.clip(V[:, j], -self.torque_limit, self.torque_limit)
             q, dq = self._rk4_step(q, dq, u)
             costs += self._running_cost(q, dq, u)
 
         costs += self._terminal_cost(q, dq)
         np.clip(costs, 0.0, 1e6, out=costs)
         np.nan_to_num(costs, nan=1e6, posinf=1e6, neginf=0.0, copy=False)
+        costs /= self.N_roll
         return costs
 
     def _state_error(self, q: np.ndarray, dq: np.ndarray) -> np.ndarray:
@@ -164,28 +178,38 @@ class MPCController(BaseController):
         return 1.0 - np.exp(-self._alpha_E * angle_err_sq)
 
     def _compute(self, state: np.ndarray, t: float) -> float:
+        self._block_step += 1
+        if self._block_step < self.block_size:
+            return self._u_current
+
+        self._block_step = 0
         start = time.time()
-        eps = np.random.randn(self.K, self.N) * self.sigma
-        V   = self._U_nom[None, :] + eps
-        S   = self._rollout(state, V)
-        beta    = S.min()
+
+        eps = np.random.randn(self.K, self.N_ctrl) * self.sigma
+        V = self._U_nom[None, :] + eps
+
+        S = self._rollout(state, V)
+        beta = S.min()
         weights = np.exp(-(S - beta) / self.lam)
         weights /= weights.sum()
 
         self._U_nom += (weights[:, None] * eps).sum(axis=0)
-        self._U_nom  = np.clip(self._U_nom, -self.torque_limit, self.torque_limit)
+        #self._U_nom = np.clip(self._U_nom, -self.torque_limit, self.torque_limit)
 
-        u                = float(self._U_nom[0])
+        self._u_current = float(self._U_nom[0])
+
         self._U_nom[:-1] = self._U_nom[1:]
-        self._U_nom[-1]  = 0.0
+        self._U_nom[-1] = 0.0
+
         self.compute_times.append(time.time() - start)
         self.compute_cnt += 1
         if self.compute_cnt == 50:
-            t = np.array(self.compute_times)
-            print(f"Mean time: {np.mean(t)}, std: {np.std(t)}")
+            tt = np.array(self.compute_times)
+            print(f"Mean time: {np.mean(tt):.4f}s, std: {np.std(tt):.4f}, cost: min {np.min(S)}, max {np.max(S)}, std: {np.std(S)}")
             self.compute_cnt = 0
             self.compute_times = []
-        return u
+
+        return self._u_current
 
 
 if __name__ == "__main__":
