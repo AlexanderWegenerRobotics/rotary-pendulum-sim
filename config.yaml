@@ -7,10 +7,11 @@ simulation:
   physics_hz: 500
   log_path: "log/"
   video_log: true
-  torque_limit: 500000.0
+  torque_limit: 5.0
 
 test:
   scenario: "nominal"
   duration: 30.0
-  initial_state: [-1.5708, 0.0, 0.0, 0.0]
+  initial_state: [1.5708, 0.0, 0.0, 0.0]
+  target_state: [1.5708, 0.0, 0.0, 0.0]
   test_cases_path: "src/test_cases.yaml"
