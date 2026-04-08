@@ -6,6 +6,7 @@ Usage:
     python run_all_tests.py                    # defaults to MPCController
     python run_all_tests.py --controller lqr   # use LQRController
     python run_all_tests.py --headless         # no render window
+    python run_all_tests.py --controller mpc --headless --flush     # flushes the csv even when stoped
 """
 
 import yaml
@@ -129,17 +130,13 @@ def save_results_csv(results: list, path: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Batch evaluation runner")
-    parser.add_argument("--controller", type=str, default="mpc",
-                        choices=["mpc", "lqr", "ilqr"],
-                        help="Controller to evaluate")
-    parser.add_argument("--headless", action="store_true",
-                        help="Run without rendering")
-    parser.add_argument("--scenarios", nargs="*", default=None,
-                        help="Specific scenarios to run (default: all)")
+    parser.add_argument("--controller", type=str, default="mpc", choices=["mpc", "lqr", "ilqr"], help="Controller to evaluate")
+    parser.add_argument("--headless", action="store_true", help="Run without rendering")
+    parser.add_argument("--scenarios", nargs="*", default=None, help="Specific scenarios to run (default: all)")
+    parser.add_argument("--flush", action="store_true", help="Write CSV after each scenario (recover partial runs)")
     args = parser.parse_args()
 
     mp.set_start_method("spawn", force=True)
-
     config = load_config()
 
     # load all available scenarios
@@ -157,23 +154,37 @@ def main():
     print(f"Controller: {args.controller}")
     print(f"Scenarios:  {len(scenario_names)}")
     print(f"Headless:   {args.headless}")
+    print(f"Press Ctrl+C to stop early (partial results will be saved)")
     print()
 
+    csv_path = f"results_{args.controller}.csv"
     results = []
-    for name in scenario_names:
-        try:
-            metrics = run_scenario(config, name, args.controller,
-                                   headless=args.headless)
-            results.append(metrics)
-        except Exception as e:
-            print(f"  FAILED: {e}")
-            results.append({"scenario": name, "rms_error": float("nan")})
+    aborted = False
+
+    try:
+        for i, name in enumerate(scenario_names):
+            print(f"[{i+1}/{len(scenario_names)}]", end=" ")
+            try:
+                metrics = run_scenario(config, name, args.controller, headless=args.headless)
+                results.append(metrics)
+            except Exception as e:
+                print(f"  FAILED: {e}")
+                results.append({"scenario": name, "rms_error": float("nan")})
+
+            if args.flush and results:
+                save_results_csv(results, csv_path)
+
+    except KeyboardInterrupt:
+        aborted = True
+        print(f"\n\nAborted after {len(results)}/{len(scenario_names)} scenarios.")
 
     print()
     print_results_table(results)
-
-    csv_path = f"results_{args.controller}.csv"
     save_results_csv(results, csv_path)
+
+    if aborted:
+        remaining = scenario_names[len(results):]
+        print(f"\nSkipped: {', '.join(remaining)}")
 
 
 if __name__ == "__main__":
