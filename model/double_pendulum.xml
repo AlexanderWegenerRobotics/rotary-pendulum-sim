@@ -5,7 +5,7 @@
   <option timestep="0.001" gravity="0 0 -9.81" integrator="RK4"/>
 
   <default>
-    <joint damping="0.005" armature="0.002" frictionloss="0.001"/>
+    <joint damping="0.07" armature="0.002" frictionloss="0.001"/>
     <geom contype="0" conaffinity="0"/>
   </default>
 

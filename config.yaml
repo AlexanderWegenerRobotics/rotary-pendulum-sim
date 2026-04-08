@@ -12,6 +12,6 @@ simulation:
 test:
   scenario: "nominal"
   duration: 30.0
-  initial_state: [1.5708, 0.0, 0.0, 0.0]
+  initial_state: [-1.5708, 0.0, 0.0, 0.0]
   target_state: [1.5708, 0.0, 0.0, 0.0]
   test_cases_path: "src/test_cases.yaml"
