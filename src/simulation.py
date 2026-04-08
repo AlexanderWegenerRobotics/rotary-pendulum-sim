@@ -39,6 +39,10 @@ class Simulation:
 
         self._set_initial_state(self.test_cfg.get("initial_state", [0, 0, 0, 0]))
 
+        init_state = np.concatenate([self.data.qpos.copy(), self.data.qvel.copy(), [self.data.time]])
+        with self.shared_state.get_lock():
+            np.frombuffer(self.shared_state.get_obj(), dtype=np.float64)[:] = init_state
+
         self.headless = self.sim_cfg.get("headless", False)
         self.video_log = self.sim_cfg.get("video_log", False)
         self.duration = self.test_cfg["duration"]
