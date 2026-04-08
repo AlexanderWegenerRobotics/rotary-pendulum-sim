@@ -15,6 +15,9 @@ class SystemParams:
     I1: float   # link1 inertia about swing axis [kg·m²]
     I2: float   # link2 inertia about swing axis [kg·m²]
     g: float    # gravitational acceleration [m/s²]
+    dt: float
+    b1: float   # joint 1 viscous damping [N·m·s/rad]
+    b2: float   # joint 2 viscous damping [N·m·s/rad]
 
 
 def _load_scenario(config: dict) -> dict:
@@ -30,6 +33,7 @@ def get_system_params(config: dict) -> SystemParams:
     scenario = _load_scenario(config)
 
     g = abs(model.opt.gravity[2])
+    dt = model.opt.timestep
 
     link1_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "link1")
     link2_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "link2")
@@ -50,9 +54,14 @@ def get_system_params(config: dict) -> SystemParams:
     I1 = float(model.body_inertia[link1_id][1])
     I2 = float(model.body_inertia[link2_id][1])
 
+    j1 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "joint1")
+    j2 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "joint2")
+    b1 = float(model.dof_damping[j1])
+    b2 = float(model.dof_damping[j2])
+
     alpha = scenario.get("mass_perturbation", 0.0)
     if alpha != 0.0:
         m1 *= (1.0 + alpha)
         m2 *= (1.0 + alpha)
 
-    return SystemParams(m1=m1, m2=m2, l1=l1, l2=l2, lc1=lc1, lc2=lc2, I1=I1, I2=I2, g=g)
+    return SystemParams(m1=m1, m2=m2, l1=l1, l2=l2, lc1=lc1, lc2=lc2, I1=I1, I2=I2, g=g, dt=dt, b1=b1, b2=b2)

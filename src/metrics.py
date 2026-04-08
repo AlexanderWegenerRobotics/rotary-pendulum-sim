@@ -1,9 +1,16 @@
 import h5py
 import numpy as np
 
+
 def compute_metrics(log_path: str, upright: np.ndarray = None) -> dict:
+    """Compute performance metrics from an HDF5 log file.
+
+    Args:
+        log_path: path to .h5 log
+        upright: target state [q1, q2, dq1, dq2], defaults to [pi/2, 0, 0, 0]
+    """
     if upright is None:
-        upright = np.array([0.0, np.pi, 0.0, 0.0])
+        upright = np.array([np.pi / 2, 0.0, 0.0, 0.0])
 
     with h5py.File(log_path, "r") as f:
         t   = f["t"][:]
@@ -14,30 +21,52 @@ def compute_metrics(log_path: str, upright: np.ndarray = None) -> dict:
         u   = f["u"][:]
         solve_time = f["solve_time"][:]
 
-    state = np.stack([q1, q2, dq1, dq2], axis=1)
-    error = state - upright
+    # angle error with wrapping (handles q1 crossing +/-pi)
+    q1_err = np.arctan2(np.sin(q1 - upright[0]), np.cos(q1 - upright[0]))
+    q2_err = np.arctan2(np.sin(q2 - upright[1]), np.cos(q2 - upright[1]))
+    dq1_err = dq1 - upright[2]
+    dq2_err = dq2 - upright[3]
 
-    rms_error  = float(np.sqrt(np.mean(np.sum(error ** 2, axis=1))))
-    rms_torque = float(np.sqrt(np.mean(u ** 2)))
+    error = np.stack([q1_err, q2_err, dq1_err, dq2_err], axis=1)
+
+    # RMS of full state error (positions in rad, velocities in rad/s)
+    rms_error = float(np.sqrt(np.mean(np.sum(error**2, axis=1))))
+
+    # separate position and velocity RMS for clearer reporting
+    rms_pos = float(np.sqrt(np.mean(q1_err**2 + q2_err**2)))
+    rms_vel = float(np.sqrt(np.mean(dq1_err**2 + dq2_err**2)))
+
+    rms_torque = float(np.sqrt(np.mean(u**2)))
 
     settling_time = _settling_time(t, error)
 
     return {
-        "rms_error":         rms_error,
-        "rms_torque":        rms_torque,
-        "settling_time_s":   settling_time,
+        "rms_error":          rms_error,
+        "rms_pos_error":      rms_pos,
+        "rms_vel_error":      rms_vel,
+        "rms_torque":         rms_torque,
+        "settling_time_s":    settling_time,
         "mean_solve_time_ms": float(np.mean(solve_time) * 1e3),
-        "max_solve_time_ms":  float(np.max(solve_time)  * 1e3),
+        "max_solve_time_ms":  float(np.max(solve_time) * 1e3),
     }
 
 
-def _settling_time(t: np.ndarray, error: np.ndarray, threshold: float = 0.05) -> float:
-    norm = np.sqrt(np.sum(error ** 2, axis=1))
-    settled = np.where(norm < threshold)[0]
-    if len(settled) == 0:
+def _settling_time(t: np.ndarray, error: np.ndarray,
+                   threshold: float = 0.05) -> float:
+    """Time after which state error norm stays below threshold permanently.
+
+    Uses only position components (q1, q2) for the settling criterion,
+    since velocity naturally oscillates around zero with sensor noise.
+    """
+    pos_norm = np.sqrt(error[:, 0]**2 + error[:, 1]**2)
+
+    # scan backwards: find last time the norm exceeded threshold
+    exceeded = np.where(pos_norm >= threshold)[0]
+    if len(exceeded) == 0:
+        # always below threshold (started at target)
+        return 0.0
+    last_exceed = exceeded[-1]
+    if last_exceed >= len(t) - 1:
+        # never settled
         return float("nan")
-    # first index after which the system stays settled
-    for i in settled:
-        if np.all(norm[i:] < threshold):
-            return float(t[i])
-    return float("nan")
+    return float(t[last_exceed + 1])
