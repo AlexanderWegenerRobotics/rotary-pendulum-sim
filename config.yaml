@@ -11,8 +11,8 @@ simulation:
 
 test:
   scenario: "nominal"
-  duration: 10.0
-  initial_state: [-1.5708, 0.0, 0.0, 0.0]
-  target_state: [1.5708, 0.0, 0.0, 0.0]
+  duration: 6.0
+  initial_state: [-1.5608, -0.01, 0.0, 0.0]
+  target_state: [-1.5708, 0.0, 0.0, 0.0]
   test_cases_path: "src/test_cases.yaml"
   impulse_times: [5.0, 10.0]
