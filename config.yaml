@@ -1,16 +1,18 @@
 simulation:
   model_path: "model/scene.xml"
-  headless: false
+  headless: true
   render_width: 1280
   render_height: 720
-  render_fps: 20
+  render_fps: 60
   physics_hz: 500
   log_path: "log/"
-  video_log: true
-  torque_limit: 160.0
+  video_log: false
+  torque_limit: 5.0
 
 test:
   scenario: "nominal"
-  duration: 20.0
+  duration: 5.0
   initial_state: [-1.5708, 0.0, 0.0, 0.0]
+  target_state: [1.5708, 0.0, 0.0, 0.0]
   test_cases_path: "src/test_cases.yaml"
+  impulse_times: [5.0, 10.0]
