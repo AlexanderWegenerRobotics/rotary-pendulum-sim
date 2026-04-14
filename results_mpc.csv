@@ -1,0 +1,14 @@
+scenario,rms_error
+nominal,nan
+noise_high,nan
+noise_low,nan
+noise_mid,nan
+torque_limit_low,nan
+torque_limit_mid,nan
+mismatch_high,nan
+mismatch_low,nan
+mismatch_mid,nan
+impulse_high,nan
+impulse_low,nan
+impulse_mid,nan
+combined_stress,nan
