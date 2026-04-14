@@ -95,8 +95,8 @@ class MPCController(BaseController):
     """
 
     # --- horizon ---
-    N = 40                   # prediction steps
-    MPC_DT = 0.02            # discretization [s] => 0.8s lookahead
+    N = 20                   # prediction steps
+    MPC_DT = 0.04            # discretization [s] => 0.8s lookahead
 
     # --- default actuator limit (overridden by scenario) ---
     TAU_MAX = 5.0            # [Nm]

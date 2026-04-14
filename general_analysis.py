@@ -2,7 +2,7 @@ import sys
 sys.path.insert(1, "..")
 import h5py
 import numpy as np
-#import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 from pathlib import Path
 from src.metrics import compute_metrics
 
@@ -29,3 +29,27 @@ print(f"Settling time:        {metrics['settling_time_s']:.3f} s")
 print(f"Mean solve time:      {metrics['mean_solve_time_ms']:.3f} ms")
 print(f"Max solve time:       {metrics['max_solve_time_ms']:.3f} ms")
 print(f"Loaded: {path.name}  |  {len(t)} steps  |  duration {t[-1]:.2f}s")
+
+
+fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
+fig.suptitle(path.stem, fontsize=11)
+axes[0].plot(t, np.degrees(q1), label="q1")
+axes[0].plot(t, np.degrees(q2), label="q2")
+axes[0].set_ylabel("Joint angle [deg]")
+axes[0].legend()
+axes[0].grid(True)
+
+axes[1].plot(t, np.degrees(dq1), label="dq1")
+axes[1].plot(t, np.degrees(dq2), label="dq2")
+axes[1].set_ylabel("Joint velocity [deg/s]")
+axes[1].legend()
+axes[1].grid(True)
+
+axes[2].plot(t, u, color="tab:red", label="u")
+axes[2].set_ylabel("Control torque [Nm]")
+axes[2].set_xlabel("Time [s]")
+axes[2].legend()
+axes[2].grid(True)
+
+plt.tight_layout()
+plt.show()
