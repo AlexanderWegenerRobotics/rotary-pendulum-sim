@@ -1,12 +1,12 @@
 simulation:
   model_path: "model/scene.xml"
-  headless: false
+  headless: true
   render_width: 1280
   render_height: 720
   render_fps: 60
   physics_hz: 500
   log_path: "log/"
-  video_log: true
+  video_log: false
   torque_limit: 5.0
 
 test:

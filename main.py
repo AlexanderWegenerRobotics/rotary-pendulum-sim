@@ -1,4 +1,4 @@
-import yaml
+import yaml, time
 import multiprocessing as mp
 
 from src.double_pendulum import DoublePendulum
@@ -16,6 +16,9 @@ if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
 
     config = load_config()
-    controller = LQRController(config)
+    controller = MPCController(config)
     env = DoublePendulum(config, controller)
+    start_time = time.time()
+    print("Start test")
     env.run()
+    print(f"Finished. Duration: {time.time() - start_time:.4f}s")
