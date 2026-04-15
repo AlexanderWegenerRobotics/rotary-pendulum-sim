@@ -52,12 +52,12 @@ class iLQRController(BaseController):
     OFFLINE_HORIZON  = 80          # 1.6 s lookahead for swing-up
     OFFLINE_MAX_ITER = 80
 
-    ONLINE_HORIZON   = 35          # 0.4 s lookahead for stabilisation
-    ONLINE_MAX_ITER  = 3
-    REPLAN_INTERVAL  = 1           # control cycles between re-solves
+    ONLINE_HORIZON   = 20          # 0.4 s lookahead for stabilisation
+    ONLINE_MAX_ITER  = 4
+    REPLAN_INTERVAL  = 2           # control cycles between re-solves
 
     Q_DIAG = (3.0, 15.0, 0.5, 2.0)
-    R_VAL  = 0.5
+    R_VAL  = 0.02
     P_TERM_DIAG = (10.0, 40.0, 5.0, 20.0)
     R_TERM_VAL  = 0.05
 
@@ -132,6 +132,11 @@ class iLQRController(BaseController):
             return 0.002, 0.002, 0.02, 0.02
 
     def _terminal_cost_matrix(self):
+        """
+        Solve discrete Riccati at upright to use as terminal cost.
+        Not used as a controller — only as a quadratic weight on the
+        last state of every iLQR rollout.
+        """
         a1, a2, b = self.a1, self.a2, self.beta
         m1, m2 = self.m1, self.m2
         l1, lc1, lc2, g = self.l1, self.lc1, self.lc2, self.g
@@ -185,10 +190,6 @@ class iLQRController(BaseController):
         M12 = a2 + b*c2
         M22 = a2 + self.arm2
         det = M11*M22 - M12**2
-        
-        # Protect against matrix becoming singular numerically
-        if det < 1e-6:
-            det = 1e-6
 
         C1 = -2*b*s2*dq1*dq2 - b*s2*dq2**2
         C2 = b*s2*dq1**2
@@ -208,19 +209,7 @@ class iLQRController(BaseController):
         k2 = self._continuous_dynamics(x + 0.5*dt*k1, uc)
         k3 = self._continuous_dynamics(x + 0.5*dt*k2, uc)
         k4 = self._continuous_dynamics(x + dt*k3, uc)
-        
-        x_next = x + (dt/6.0)*(k1 + 2*k2 + 2*k3 + k4)
-        
-        # NEW FIX: Hard clamp on velocities to prevent numerical overflows 
-        # (200 rad/s is approx 30 rev/sec, well beyond physically realistic bounds)
-        x_next[2] = np.clip(x_next[2], -200.0, 200.0)
-        x_next[3] = np.clip(x_next[3], -200.0, 200.0)
-        
-        # If any NaNs slipped through, zero out the state to kill the cascade
-        if np.isnan(x_next).any():
-            x_next = np.zeros_like(x_next)
-            
-        return x_next
+        return x + (dt/6.0)*(k1 + 2*k2 + 2*k3 + k4)
 
     # ═══ iLQR core ══════════════════════════════════════════════════════
     def _rollout(self, x0, u_traj):
@@ -240,14 +229,13 @@ class iLQRController(BaseController):
             J += 0.5 * e @ Q @ e + 0.5 * R * u_traj[k]**2
         e = self._state_error(x_traj[-1])
         J += 0.5 * e @ self.P_term @ e
-        
-        # NEW FIX: Ensure the cost is a real number, reject NaN trajectories
-        if np.isnan(J) or np.isinf(J):
-            return np.inf
-            
         return J
 
     def _ilqr(self, x0, u_init, max_iter):
+        """
+        Generic iLQR solve.
+        Returns (u_traj, x_traj, K_fb, J_final).
+        """
         Q = np.diag(self.Q_DIAG)
         R = self.R_VAL
         dt = self.PLAN_DT
@@ -287,8 +275,8 @@ class iLQRController(BaseController):
 
                 Quu_r = Quu + reg
                 
-                # Catch NaNs in the backward pass properly
-                if np.isnan(Quu_r) or Quu_r <= 1e-12:
+                # FIX 2: Check for NaN properly to prevent warnings and division by zero
+                if not (Quu_r > 1e-12):
                     ok = False
                     break
 
@@ -312,6 +300,8 @@ class iLQRController(BaseController):
                 xn[0] = x0
                 for k in range(N):
                     dx    = xn[k] - x_traj[k]
+                    
+                    # FIX 1: Wrap angles so differences over the pi boundary don't explode
                     dx[0] = self._wrap(dx[0])
                     dx[1] = self._wrap(dx[1])
                     
@@ -335,6 +325,11 @@ class iLQRController(BaseController):
 
     # ═══ offline solve ══════════════════════════════════════════════════
     def _solve_offline(self, x0):
+        """
+        Long-horizon iLQR solve at construction time.  Used for swing-up
+        and any large initial transient.  Wall time is unconstrained
+        because this runs before the simulation clock starts.
+        """
         u_init = np.zeros(self.OFFLINE_HORIZON)
         u_off, x_off, K_off, _ = self._ilqr(x0, u_init,
                                              max_iter=self.OFFLINE_MAX_ITER)
@@ -342,6 +337,7 @@ class iLQRController(BaseController):
 
     # ═══ online MPC (receding horizon iLQR) ═════════════════════════════
     def _predict_forward(self, x_now, lag_cycles):
+        """Forward-predict by ``lag_cycles`` PLAN_DT steps using current plan."""
         x = x_now.copy()
         for i in range(lag_cycles):
             if self._u_on is not None and (self._on_idx + i) < self.ONLINE_HORIZON:
@@ -352,6 +348,7 @@ class iLQRController(BaseController):
         return x
 
     def _online_step(self, state):
+        """Receding horizon iLQR with latency-compensated re-planning."""
         need_replan = (self._ctrl_count % self.REPLAN_INTERVAL == 0
                        or self._on_idx >= self.ONLINE_HORIZON
                        or self._u_on is None)
@@ -401,12 +398,14 @@ class iLQRController(BaseController):
 
     # ═══ main entry ═════════════════════════════════════════════════════
     def _compute(self, state: np.ndarray, t: float) -> float:
+        # Startup race guard.
         if not self._startup_done:
             self._startup_calls += 1
             if t == 0.0 and self._startup_calls < 100:
                 return 0.0
             self._startup_done = True
 
+        # Phase 1: track the offline trajectory
         if not self._offline_done and self._off_idx < self.OFFLINE_HORIZON:
             x_nom = self._x_off[self._off_idx]
             dx = state - x_nom
@@ -417,10 +416,13 @@ class iLQRController(BaseController):
             u    = u_ff + u_fb
             self._off_idx += 1
 
+            # Mark offline as done once we reach the end
             if self._off_idx >= self.OFFLINE_HORIZON:
                 self._offline_done = True
 
+            # FIX 3: Replaced self._clip with standard np.clip for safety
             return float(np.clip(u, -self.torque_limit, self.torque_limit))
 
+        # Phase 2: receding horizon iLQR
         u = self._online_step(state)
         return float(np.clip(u, -self.torque_limit, self.torque_limit))

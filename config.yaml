@@ -1,6 +1,6 @@
 simulation:
   model_path: "model/scene.xml"
-  headless: true
+  headless: false
   render_width: 1280
   render_height: 720
   render_fps: 60

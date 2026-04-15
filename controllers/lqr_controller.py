@@ -6,7 +6,7 @@ from src.system_params import get_system_params, SystemParams
 
 
 class LQRController(BaseController):
-    ARMATURE = 0.002  # from MuJoCo XML / Alex's MPC dynamics
+    ARMATURE = 0.002
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -15,44 +15,50 @@ class LQRController(BaseController):
         self.physics_hz = config["simulation"]["physics_hz"]
         self.dt = 1.0 / self.physics_hz
 
-        # Use shared project system parameters
         self.params = get_system_params(config)
 
-        # Correct upright equilibrium from project convention
+        # Final goal: upright
         self.x_ref = np.array(
-            config["test"].get("target_state", [-np.pi / 2.0, 0.0, 0.0, 0.0]),
+            config["test"].get("target_state", [np.pi / 2.0, 0.0, 0.0, 0.0]),
             dtype=float,
         )
         self.u_ref = 0.0
 
-        # Best stable tuning
+        # Hanging-down reference for swing-up
+        self.q_down = -np.pi / 2.0
+
+        # LQR near upright
         self.Q = np.diag([80.0, 120.0, 8.0, 10.0])
         self.R = np.array([[1.0]])
 
-        self._printed_debug = False
+        # Swing-up gains
+        self.k_energy = 1.2
+        self.k_q2 = 0.25
+        self.k_dq2 = 0.08
+        self.k_kick = 0.8
 
-        # Continuous-time linearization around equilibrium
+        # Catch region
+        self.catch_angle_q1 = 0.45
+        self.catch_angle_q2 = 0.40
+        self.catch_vel_q1 = 4.0
+        self.catch_vel_q2 = 5.0
+
+        # Release region
+        self.release_angle_q1 = 0.65
+        self.release_angle_q2 = 0.60
+        self.release_vel_q1 = 5.0
+        self.release_vel_q2 = 6.0
+
+        self.mode = "swingup"
+        self._printed_debug = True
+
+        # Linearize around upright for LQR
         A_c, B_c = self._linearize_continuous(self.x_ref, self.u_ref)
-
-        # Exact ZOH discretization
         self.Ad, self.Bd = self._discretize(A_c, B_c, self.dt)
-
-        # Discrete-time LQR
         self.K = self._solve_dlqr(self.Ad, self.Bd, self.Q, self.R)
 
         Acl = self.Ad - self.Bd @ self.K
         eigvals = np.linalg.eigvals(Acl)
-
-        print("LQR initialized")
-        print("x_ref =", self.x_ref)
-        print("u_ref =", self.u_ref)
-        print("A_c =\n", A_c)
-        print("B_c =\n", B_c)
-        print("Ad =\n", self.Ad)
-        print("Bd =\n", self.Bd)
-        print("K =\n", self.K)
-        print("Closed-loop eigvals =", eigvals)
-        print("Spectral radius =", np.max(np.abs(eigvals)))
 
     def _continuous_dynamics(self, x: np.ndarray, u: float) -> np.ndarray:
         q1, q2, dq1, dq2 = x
@@ -62,7 +68,6 @@ class LQRController(BaseController):
         s2 = np.sin(q2)
         a = self.ARMATURE
 
-        # Mass matrix
         m11 = (
             p.I1
             + p.I2
@@ -74,7 +79,6 @@ class LQRController(BaseController):
         m22 = p.I2 + p.m2 * p.lc2**2 + a
         M = np.array([[m11, m12], [m12, m22]], dtype=float)
 
-        # Coriolis / centripetal
         h = p.m2 * p.l1 * p.lc2 * s2
         C_vec = np.array(
             [
@@ -84,7 +88,6 @@ class LQRController(BaseController):
             dtype=float,
         )
 
-        # Gravity
         g_vec = np.array(
             [
                 (p.m1 * p.lc1 + p.m2 * p.l1) * p.g * np.cos(q1)
@@ -94,10 +97,8 @@ class LQRController(BaseController):
             dtype=float,
         )
 
-        # Damping
         D_vec = np.array([p.b1 * dq1, p.b2 * dq2], dtype=float)
 
-        # Dynamics: M ddq = [u, 0] - C - g - D
         rhs = np.array([u, 0.0], dtype=float) - C_vec - g_vec - D_vec
         ddq = np.linalg.solve(M, rhs)
 
@@ -145,24 +146,104 @@ class LQRController(BaseController):
     def _wrap_angle(self, angle: float) -> float:
         return (angle + np.pi) % (2.0 * np.pi) - np.pi
 
-    def _compute(self, state: np.ndarray, t: float) -> float:
-        x = np.array(state, dtype=float)
+    def _energy(self, x: np.ndarray) -> float:
+        """
+        Energy relative to the hanging-down equilibrium q1 = -pi/2.
+        """
+        q1, _, dq1, _ = x
+        p = self.params
 
+        J_eff = p.I1 + p.m1 * p.lc1**2 + self.ARMATURE
+        mgl_eff = (p.m1 * p.lc1 + p.m2 * p.l1) * p.g
+
+        V = mgl_eff * (np.sin(q1) + 1.0)
+        T = 0.5 * J_eff * dq1**2
+        return T + V
+
+    def _desired_upright_energy(self) -> float:
+        p = self.params
+        mgl_eff = (p.m1 * p.lc1 + p.m2 * p.l1) * p.g
+        return 2.0 * mgl_eff
+
+    def _swing_up_control(self, x: np.ndarray) -> float:
+        q1, q2, dq1, dq2 = x
+
+        E = self._energy(x)
+        E_des = self._desired_upright_energy()
+        E_err = E_des - E
+
+        # Smooth pumping
+        phase = dq1 * np.sin(q1)
+        pump = (
+            self.k_energy
+            * self.torque_limit
+            * np.tanh(0.30 * E_err)
+            * np.tanh(10.0 * phase)
+        )
+
+        # Small kick-start when stuck near hanging down
+        q_down_err = self._wrap_angle(q1 - self.q_down)
+        if abs(dq1) < 0.08 and abs(q_down_err) < 0.20:
+            pump += self.k_kick * np.sign(q_down_err if abs(q_down_err) > 1e-4 else 1.0)
+
+        shape = -self.k_q2 * self._wrap_angle(q2) - self.k_dq2 * dq2
+
+        u = pump + shape
+        return self._clip(u, self.torque_limit)
+
+    def _lqr_control(self, x: np.ndarray) -> float:
         err = x - self.x_ref
         err[0] = self._wrap_angle(err[0])
         err[1] = self._wrap_angle(err[1])
 
         u = -float((self.K @ err.reshape(-1, 1)).item())
-        u = self._clip(u, self.torque_limit)
+        return self._clip(u, self.torque_limit)
+
+    def _should_switch_to_lqr(self, x: np.ndarray) -> bool:
+        q1, q2, dq1, dq2 = x
+        e1 = self._wrap_angle(q1 - self.x_ref[0])
+        e2 = self._wrap_angle(q2 - self.x_ref[1])
+
+        return (
+            abs(e1) < self.catch_angle_q1
+            and abs(e2) < self.catch_angle_q2
+            and abs(dq1) < self.catch_vel_q1
+            and abs(dq2) < self.catch_vel_q2
+        )
+
+    def _should_fall_back_to_swingup(self, x: np.ndarray) -> bool:
+        q1, q2, dq1, dq2 = x
+        e1 = self._wrap_angle(q1 - self.x_ref[0])
+        e2 = self._wrap_angle(q2 - self.x_ref[1])
+
+        return (
+            abs(e1) > self.release_angle_q1
+            or abs(e2) > self.release_angle_q2
+            or abs(dq1) > self.release_vel_q1
+            or abs(dq2) > self.release_vel_q2
+        )
+
+    def _compute(self, state: np.ndarray, t: float) -> float:
+        x = np.array(state, dtype=float)
+
+        if self.mode == "swingup" and self._should_switch_to_lqr(x):
+            self.mode = "lqr"
+        elif self.mode == "lqr" and self._should_fall_back_to_swingup(x):
+            self.mode = "swingup"
+
+        if self.mode == "lqr":
+            u = self._lqr_control(x)
+        else:
+            u = self._swing_up_control(x)
 
         if (not self._printed_debug) and (t > 0.05):
-            print("\n----- LQR DEBUG -----")
+            print("\n----- HYBRID DEBUG -----")
             print(f"t      = {t:.3f}")
+            print("mode   =", self.mode)
             print("state  =", x)
             print("x_ref  =", self.x_ref)
-            print("err    =", err)
             print(f"torque = {u:.6f}")
-            print("---------------------\n")
+            print("------------------------\n")
             self._printed_debug = True
 
         return u
