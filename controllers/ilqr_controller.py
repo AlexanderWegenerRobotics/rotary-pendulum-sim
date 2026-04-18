@@ -49,19 +49,19 @@ class iLQRController(BaseController):
     # ── iLQR design parameters ──────────────────────────────────────────
     PLAN_DT = 0.020
 
-    OFFLINE_HORIZON  = 80          # 1.6 s lookahead for swing-up
-    OFFLINE_MAX_ITER = 80
+    OFFLINE_HORIZON  = 84         # 1.6 s lookahead for swing-up
+    OFFLINE_MAX_ITER = 10
 
-    ONLINE_HORIZON   = 20          # 0.4 s lookahead for stabilisation
-    ONLINE_MAX_ITER  = 4
-    REPLAN_INTERVAL  = 2           # control cycles between re-solves
+    ONLINE_HORIZON   = 16          # 0.4 s lookahead for stabilisation
+    ONLINE_MAX_ITER  =1
+    REPLAN_INTERVAL  = 1           # control cycles between re-solves
 
-    Q_DIAG = (3.0, 15.0, 0.5, 2.0)
-    R_VAL  = 0.02
-    P_TERM_DIAG = (10.0, 40.0, 5.0, 20.0)
-    R_TERM_VAL  = 0.05
+    Q_DIAG = ( 4.272113777294933, 5.398427944681879, 5.633859125309996, 4.0509479754039734)
+    R_VAL  =  0.34281579648552424
+    P_TERM_DIAG = (0.36625801499646554, 36.69276164410996, 0.012383228461722158, 0.48510091243688835)
+    R_TERM_VAL  = 0.611033578943546
 
-    OFFLINE_DONE_TOL = 0.5         # |state error| below which offline ends
+    OFFLINE_DONE_TOL = 0.7670835612721277         # |state error| below which offline ends
 
     # ════════════════════════════════════════════════════════════════════
     def __init__(self, config: dict):
