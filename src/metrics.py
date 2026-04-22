@@ -51,22 +51,37 @@ def compute_metrics(log_path: str, upright: np.ndarray = None) -> dict:
     }
 
 
-def _settling_time(t: np.ndarray, error: np.ndarray,
-                   threshold: float = 0.05) -> float:
-    """Time after which state error norm stays below threshold permanently.
-
-    Uses only position components (q1, q2) for the settling criterion,
-    since velocity naturally oscillates around zero with sensor noise.
-    """
-    pos_norm = np.sqrt(error[:, 0]**2 + error[:, 1]**2)
-
-    # scan backwards: find last time the norm exceeded threshold
-    exceeded = np.where(pos_norm >= threshold)[0]
-    if len(exceeded) == 0:
-        # always below threshold (started at target)
-        return 0.0
-    last_exceed = exceeded[-1]
-    if last_exceed >= len(t) - 1:
-        # never settled
+def _settling_time(t, error, angle_tol_rad=np.deg2rad(5.0), window_s=0.5):
+    if len(t) < 2:
         return float("nan")
-    return float(t[last_exceed + 1])
+
+    dt = float(np.median(np.diff(t)))
+    window_n = max(1, int(round(window_s / dt)))
+
+    q1_ok = np.abs(error[:, 0]) <= angle_tol_rad
+    q2_ok = np.abs(error[:, 1]) <= angle_tol_rad
+    inside = q1_ok & q2_ok
+
+    if len(inside) < window_n:
+        return float("nan")
+
+    conv = np.convolve(inside.astype(np.int32), np.ones(window_n, dtype=np.int32), mode="valid")
+    hit = np.where(conv == window_n)[0]
+
+    if len(hit) == 0:
+        return float("nan")
+
+    return float(t[hit[0]])
+
+def _success_flag(t, error, angle_tol_rad=np.deg2rad(5.0), final_window_s=0.5):
+    if len(t) < 2:
+        return False
+
+    dt = float(np.median(np.diff(t)))
+    window_n = max(1, int(round(final_window_s / dt)))
+
+    q1_ok = np.abs(error[:, 0]) <= angle_tol_rad
+    q2_ok = np.abs(error[:, 1]) <= angle_tol_rad
+    inside = q1_ok & q2_ok
+
+    return bool(np.all(inside[-window_n:]))

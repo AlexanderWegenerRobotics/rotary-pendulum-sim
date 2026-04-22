@@ -244,9 +244,9 @@ class MPCController(BaseController):
                 w0 += [0.0]
 
         # --- initial state constraint ---
-        g.append(X_vars[0] - x0_param)
-        lbg += [0.0] * nx
-        ubg += [0.0] * nx
+        #g.append(X_vars[0] - x0_param)
+        #lbg += [0.0] * nx
+        #ubg += [0.0] * nx
 
         # --- stage costs + dynamics constraints ---
         for k in range(N):
