@@ -6,8 +6,8 @@ simulation:
   render_fps: 60
   physics_hz: 500
   log_path: "log/"
-  video_log: false
-  torque_limit: 5.0
+  video_log: true
+  torque_limit: 10.0
 
 test:
   scenario: "nominal"
