@@ -17,7 +17,7 @@ if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
 
     config = load_config()
-    controller = MPCController(config)
+    controller = LQRController(config)
     env = DoublePendulum(config, controller)
     start_time = time.time()
     print("Start test")

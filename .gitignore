@@ -3,12 +3,6 @@ logs/
 log/
 *.csv
 
-horizon_sweep_plot.py
-torque_limit_sweep.py
-torque_limit_sweep_output/
-horizon_sweep_output/
-horizon_sweep_plots/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -31,3 +25,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+
+mpc_archive/

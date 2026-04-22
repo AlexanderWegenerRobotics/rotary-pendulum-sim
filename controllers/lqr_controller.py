@@ -1,4 +1,5 @@
 import numpy as np
+import yaml
 from scipy.linalg import expm, solve_discrete_are
 
 from controllers.base_controller import BaseController
@@ -6,192 +7,127 @@ from src.system_params import get_system_params, SystemParams
 
 
 class LQRController(BaseController):
-    ARMATURE = 0.002  # from MuJoCo XML / Alex's MPC dynamics
+    ARMATURE = 0.002
 
-    # swing-up tuning
-    SWING_UP_GAIN = 60.0
+    LQR_Q_DIAG = [30.0, 300.0, 5.0, 40.0]
+    LQR_R = 1.0
 
-    # catch earlier, but require slower entry
-    LQR_CATCH_ANGLE_Q1 = 0.2
-    LQR_CATCH_ANGLE_Q2 = 0.85
-    LQR_CATCH_VEL = 2.5
+    ENTER_ERR_Q1 = 0.40
+    ENTER_ERR_Q2 = 0.45
+    ENTER_VEL_NORM = 3.00
+    ENTER_ENERGY_ERR = 0.60
+
+    DEPART_ANGLE = 0.08
+    DEPART_VEL = 0.25
+    DEPART_TIME = 0.22
+    DEPART_TORQUE_FRAC = 0.38
+
+    ENERGY_GAIN = 0.60
+    ENERGY_SCALE = 1.20
+    ENERGY_Q2_BIAS = 0.12
+    ENERGY_Q2_DAMP = 0.08
+
+    APPROACH_Q1 = 0.85
+    APPROACH_Q2 = 1.20
+    APPROACH_ENERGY = 0.90
+    APPROACH_K_Q1 = 7.5
+    APPROACH_K_Q2 = 17.0
+    APPROACH_K_DQ1 = 2.8
+    APPROACH_K_DQ2 = 4.0
+    APPROACH_BRAKE = 0.55
+    APPROACH_BLEND_POWER = 1.6
 
     def __init__(self, config: dict):
+        """Initialize model data, LQR gain, switching thresholds, and energy targets."""
         super().__init__(config)
-
-        self.torque_limit = config["simulation"].get("torque_limit", np.inf)
-        self.physics_hz = config["simulation"]["physics_hz"]
-        self.dt = 1.0 / self.physics_hz
-
         self.params = get_system_params(config)
+        self.dt = 1.0 / config["simulation"].get("control_hz", config["simulation"]["physics_hz"])
+        # The sim dispatches _compute at ~400 Hz regardless of physics_hz, so pinning dt.
+        self.dt = 0.0025
+        self.x_ref = np.array(config["test"].get("target_state", [np.pi / 2, 0.0, 0.0, 0.0]), dtype=float)
+        self.x_down = np.array(config["test"].get("initial_state", [-np.pi / 2, 0.0, 0.0, 0.0]), dtype=float)
+        self.torque_limit = self._read_torque_limit(config)
 
-        # upright target
-        self.x_ref = np.array(config["test"]["target_state"])
-        self.u_ref = 0.0
+        self.Q = np.diag(self.LQR_Q_DIAG)
+        self.R = np.array([[self.LQR_R]], dtype=float)
 
-        # LQR tuning
-        self.Q = np.diag([80.0, 120.0, 8.0, 10.0])
-        self.R = np.array([[1.0]])
-
-        # startup guard
-        self._startup_done = False
-        self._startup_calls = 0
-        self._printed_debug = False
-
-        # continuous-time linearization around upright
-        A_c, B_c = self._linearize_continuous(self.x_ref, self.u_ref)
-
-        # exact ZOH discretization
+        A_c, B_c = self._linearize_continuous(self.x_ref, 0.0)
         self.Ad, self.Bd = self._discretize(A_c, B_c, self.dt)
-
-        # discrete-time LQR
         self.K = self._solve_dlqr(self.Ad, self.Bd, self.Q, self.R)
 
-        # energy at upright target
-        self._E_upright = self._total_energy(self.x_ref)
+        self.E_upright = self._total_energy(self.x_ref)
+        self._depart_done = False
+        self._in_lqr = False
+        self._mode = "depart"
 
-        Acl = self.Ad - self.Bd @ self.K
-        eigvals = np.linalg.eigvals(Acl)
-        self.mode = "SWING-UP"
+    def _read_torque_limit(self, config: dict) -> float:
+        """Read the active torque limit from the scenario and fall back to simulation defaults."""
+        limit = config["simulation"].get("torque_limit", np.inf)
+        test_cfg = config.get("test", {})
+        path = test_cfg.get("test_cases_path")
+        name = test_cfg.get("scenario")
 
-    # ------------------------------------------------------------------
-    # energy computation for swing-up
-    # ------------------------------------------------------------------
+        if path and name:
+            try:
+                with open(path) as f:
+                    scenario = yaml.safe_load(f)["scenarios"][name]
+                scenario_limit = scenario.get("torque_limit")
+                if scenario_limit is not None:
+                    limit = float(scenario_limit)
+            except Exception:
+                pass
 
-    def _total_energy(self, x: np.ndarray) -> float:
-        q1, q2, dq1, dq2 = x
-        p = self.params
-        a = self.ARMATURE
-        c2 = np.cos(q2)
+        return float(limit)
 
-        m11 = (
-            p.I1
-            + p.I2
-            + p.m1 * p.lc1**2
-            + p.m2 * (p.l1**2 + p.lc2**2 + 2.0 * p.l1 * p.lc2 * c2)
-            + a
-        )
-        m12 = p.I2 + p.m2 * (p.lc2**2 + p.l1 * p.lc2 * c2)
-        m22 = p.I2 + p.m2 * p.lc2**2 + a
+    def _wrap_angle(self, angle: float) -> float:
+        """Wrap one angle to the interval [-pi, pi)."""
+        return (angle + np.pi) % (2.0 * np.pi) - np.pi
 
-        T = 0.5 * (m11 * dq1**2 + 2.0 * m12 * dq1 * dq2 + m22 * dq2**2)
+    def _angle_error(self, q: float, q_ref: float) -> float:
+        """Compute the wrapped angular error relative to a reference angle."""
+        return self._wrap_angle(q - q_ref)
 
-        U = (
-            (p.m1 * p.lc1 + p.m2 * p.l1) * p.g * np.sin(q1)
-            + p.m2 * p.lc2 * p.g * np.sin(q1 + q2)
-        )
-
-        return T + U
-
-    # ------------------------------------------------------------------
-    # energy-based swing-up
-    # ------------------------------------------------------------------
-
-    def _swingup_torque(self, state: np.ndarray) -> float:
-        E_err = self._total_energy(state) - self._E_upright
-
-        q1, q2, dq1, dq2 = state
-        q1_err = self._wrap_angle(q1 - self.x_ref[0])
-
-        # if nearly stationary and far from upright, kick hard
-        #if abs(dq1) < 0.5 and abs(q1_err) > 0.8:
-        #    return self._clip(np.sign(-q1_err) * self.torque_limit, self.torque_limit)
-        if self._startup_calls < 50:
-            self._startup_calls += 1
-            return self.torque_limit * 0.5  # gentle push to break symmetry
-
-        # energy pumping term
-        pump_signal = dq1 * np.sin(q1 - self.x_ref[0])
-        if abs(pump_signal) > 1e-6:
-            tau_energy = -self.SWING_UP_GAIN * E_err * np.sign(pump_signal)
-        else:
-            tau_energy = 0.0
-
-        # shape both links near the top
-        if abs(q1_err) < 1.2:
-            tau_position = (-25.0 * q1_err - 5.0 * dq1 - 8.0 * q2 - 2.0 * dq2)
-        else:
-            tau_position = 0.0
-
-        # energy dominates far away, shaping helps near the top
-        alpha = max(0.0, 1.0 - abs(q1_err) / 1.2)
-        tau = (1.0 - alpha) * tau_energy + alpha * tau_position
-
-        return self._clip(tau, self.torque_limit)
-
-    # ------------------------------------------------------------------
-    # catch condition
-    # ------------------------------------------------------------------
-
-    def _near_upright(self, state: np.ndarray) -> bool:
-        err = state - self.x_ref
-        angle_err_q1 = abs(self._wrap_angle(err[0]))
-        angle_err_q2 = abs(self._wrap_angle(err[1]))
-        vel_norm = np.sqrt(err[2] ** 2 + err[3] ** 2)
-
-        return (
-            angle_err_q1 < self.LQR_CATCH_ANGLE_Q1
-            and angle_err_q2 < self.LQR_CATCH_ANGLE_Q2
-            and vel_norm < self.LQR_CATCH_VEL
-        )
-
-    # ------------------------------------------------------------------
-    # dynamics
-    # ------------------------------------------------------------------
+    def _state_error(self, state: np.ndarray) -> np.ndarray:
+        """Build the wrapped state error around the upright equilibrium."""
+        err = np.array(state, dtype=float) - self.x_ref
+        err[0] = self._angle_error(state[0], self.x_ref[0])
+        err[1] = self._angle_error(state[1], self.x_ref[1])
+        return err
 
     def _continuous_dynamics(self, x: np.ndarray, u: float) -> np.ndarray:
+        """Evaluate the continuous dynamics using the same model structure as the MPC controller."""
         q1, q2, dq1, dq2 = x
         p: SystemParams = self.params
 
         c2 = np.cos(q2)
         s2 = np.sin(q2)
-        a = self.ARMATURE
 
-        m11 = (
-            p.I1
-            + p.I2
-            + p.m1 * p.lc1**2
-            + p.m2 * (p.l1**2 + p.lc2**2 + 2.0 * p.l1 * p.lc2 * c2)
-            + a
-        )
+        m11 = p.I1 + p.I2 + p.m1 * p.lc1**2 + p.m2 * (p.l1**2 + p.lc2**2 + 2.0 * p.l1 * p.lc2 * c2) + self.ARMATURE
         m12 = p.I2 + p.m2 * (p.lc2**2 + p.l1 * p.lc2 * c2)
-        m22 = p.I2 + p.m2 * p.lc2**2 + a
+        m22 = p.I2 + p.m2 * p.lc2**2 + self.ARMATURE
         M = np.array([[m11, m12], [m12, m22]], dtype=float)
 
         h = p.m2 * p.l1 * p.lc2 * s2
-        C_vec = np.array(
-            [
-                -h * (2.0 * dq1 * dq2 + dq2**2),
-                h * dq1**2,
-            ],
-            dtype=float,
-        )
+        C_vec = np.array([
+            -h * (2.0 * dq1 * dq2 + dq2**2),
+            h * dq1**2,
+        ], dtype=float)
 
-        g_vec = np.array(
-            [
-                (p.m1 * p.lc1 + p.m2 * p.l1) * p.g * np.cos(q1)
-                + p.m2 * p.lc2 * p.g * np.cos(q1 + q2),
-                p.m2 * p.lc2 * p.g * np.cos(q1 + q2),
-            ],
-            dtype=float,
-        )
+        g_vec = np.array([
+            (p.m1 * p.lc1 + p.m2 * p.l1) * p.g * np.cos(q1) + p.m2 * p.lc2 * p.g * np.cos(q1 + q2),
+            p.m2 * p.lc2 * p.g * np.cos(q1 + q2),
+        ], dtype=float)
 
         D_vec = np.array([p.b1 * dq1, p.b2 * dq2], dtype=float)
-
         rhs = np.array([u, 0.0], dtype=float) - C_vec - g_vec - D_vec
         ddq = np.linalg.solve(M, rhs)
-
         return np.array([dq1, dq2, ddq[0], ddq[1]], dtype=float)
 
-    # ------------------------------------------------------------------
-    # linearization & LQR
-    # ------------------------------------------------------------------
-
     def _linearize_continuous(self, x_eq: np.ndarray, u_eq: float):
+        """Compute numerical Jacobians of the continuous dynamics at the operating point."""
         n = 4
-        eps_x = 1e-6
-        eps_u = 1e-6
-
+        eps_x = 1e-5
+        eps_u = 1e-4
         A = np.zeros((n, n))
         B = np.zeros((n, 1))
 
@@ -205,52 +141,130 @@ class LQRController(BaseController):
         f_plus = self._continuous_dynamics(x_eq, u_eq + eps_u)
         f_minus = self._continuous_dynamics(x_eq, u_eq - eps_u)
         B[:, 0] = (f_plus - f_minus) / (2.0 * eps_u)
-
         return A, B
 
     def _discretize(self, A_c: np.ndarray, B_c: np.ndarray, dt: float):
+        """Apply exact zero-order-hold discretization to the linear model."""
         nx = A_c.shape[0]
         nu = B_c.shape[1]
-
-        top = np.hstack([A_c, B_c])
-        bot = np.zeros((nu, nx + nu))
-        M = np.vstack([top, bot])
-
+        M = np.block([[A_c, B_c], [np.zeros((nu, nx + nu))]])
         Md = expm(M * dt)
-        Ad = Md[:nx, :nx]
-        Bd = Md[:nx, nx:]
-        return Ad, Bd
+        return Md[:nx, :nx], Md[:nx, nx:]
 
-    def _solve_dlqr(self, A, B, Q, R):
+    def _solve_dlqr(self, A: np.ndarray, B: np.ndarray, Q: np.ndarray, R: np.ndarray) -> np.ndarray:
+        """Solve the discrete algebraic Riccati equation and return the optimal state-feedback gain."""
         P = solve_discrete_are(A, B, Q, R)
-        K = np.linalg.inv(B.T @ P @ B + R) @ (B.T @ P @ A)
-        return K
+        return np.linalg.solve(B.T @ P @ B + R, B.T @ P @ A)
 
-    def _wrap_angle(self, angle: float) -> float:
-        return (angle + np.pi) % (2.0 * np.pi) - np.pi
+    def _total_energy(self, x: np.ndarray) -> float:
+        """Compute total mechanical energy using the simulator coordinate convention."""
+        q1, q2, dq1, dq2 = x
+        p = self.params
+        c2 = np.cos(q2)
 
-    # ------------------------------------------------------------------
-    # main control law
-    # ------------------------------------------------------------------
+        m11 = p.I1 + p.I2 + p.m1 * p.lc1**2 + p.m2 * (p.l1**2 + p.lc2**2 + 2.0 * p.l1 * p.lc2 * c2) + self.ARMATURE
+        m12 = p.I2 + p.m2 * (p.lc2**2 + p.l1 * p.lc2 * c2)
+        m22 = p.I2 + p.m2 * p.lc2**2 + self.ARMATURE
+
+        kinetic = 0.5 * (m11 * dq1**2 + 2.0 * m12 * dq1 * dq2 + m22 * dq2**2)
+        potential = (
+            (p.m1 * p.lc1 + p.m2 * p.l1) * p.g * np.sin(q1)
+            + p.m2 * p.lc2 * p.g * np.sin(q1 + q2)
+        )
+        return float(kinetic + potential)
+
+    def _departure_torque(self, state: np.ndarray, t: float) -> float:
+        """Apply a short bounded pulse to break the exact hanging symmetry at startup."""
+        q1_err_down = self._angle_error(state[0], self.x_down[0])
+        moving = abs(state[2]) > self.DEPART_VEL or abs(q1_err_down) > self.DEPART_ANGLE
+        if moving or t > self.DEPART_TIME:
+            self._depart_done = True
+            return 0.0
+
+        pulse = 0.90 + 0.10 * np.cos(10.0 * t)
+        return self._clip(self.DEPART_TORQUE_FRAC * self.torque_limit * pulse, self.torque_limit)
+
+    def _energy_pump_torque(self, state: np.ndarray) -> float:
+        """Passivity-based energy shaping. Sigma aligns u*dq1 with desired energy rate."""
+        q1, q2, dq1, dq2 = state
+        err = self._state_error(state)
+        energy_err = self._total_energy(state) - self.E_upright
+        sigma = (dq1 + 0.30 * dq2) * np.cos(q1) + 0.15 * dq2 * np.cos(q1 + q2)
+        if abs(sigma) < 1e-5:
+            sigma = np.sign(err[0]) if abs(err[0]) > 1e-5 else 1.0
+
+        tau_energy = -self.ENERGY_GAIN * self.torque_limit * np.tanh(energy_err / self.ENERGY_SCALE) * np.sign(sigma)
+        tau_bias = -self.ENERGY_Q2_BIAS * err[1] - self.ENERGY_Q2_DAMP * err[3]
+        return self._clip(tau_energy + tau_bias, self.torque_limit)
+
+    def _approach_weight(self, state: np.ndarray) -> float:
+        """Return a smooth weight describing how close the state is to the terminal approach region."""
+        err = self._state_error(state)
+        w_q1 = np.clip(1.0 - abs(err[0]) / self.APPROACH_Q1, 0.0, 1.0)
+        w_q2 = np.clip(1.0 - abs(err[1]) / self.APPROACH_Q2, 0.0, 1.0)
+        w_e = np.clip(1.0 - abs(self._total_energy(state) - self.E_upright) / self.APPROACH_ENERGY, 0.0, 1.0)
+        return float((w_q1 * w_q2 * w_e) ** self.APPROACH_BLEND_POWER)
+
+    def _approach_torque(self, state: np.ndarray) -> float:
+        """PD toward upright plus a passivity-consistent energy brake."""
+        q1, q2, dq1, dq2 = state
+        err = self._state_error(state)
+        energy_err = self._total_energy(state) - self.E_upright
+        u_pd = (
+            -self.APPROACH_K_Q1 * err[0]
+            -self.APPROACH_K_Q2 * err[1]
+            -self.APPROACH_K_DQ1 * err[2]
+            -self.APPROACH_K_DQ2 * err[3]
+        )
+        sigma = dq1 * np.cos(q1)
+        sign_sigma = np.sign(sigma) if abs(sigma) > 1e-5 else 1.0
+        u_brake = -self.APPROACH_BRAKE * self.torque_limit * np.tanh(energy_err / 0.25) * sign_sigma
+        return self._clip(u_pd + u_brake, self.torque_limit)
+
+    def _should_enter_lqr(self, state: np.ndarray) -> bool:
+        """Check whether the state is inside the local linear capture region."""
+        err = self._state_error(state)
+        vel_norm = np.linalg.norm(err[2:])
+        energy_err = abs(self._total_energy(state) - self.E_upright)
+        return (
+            abs(err[0]) < self.ENTER_ERR_Q1
+            and abs(err[1]) < self.ENTER_ERR_Q2
+            and vel_norm < self.ENTER_VEL_NORM
+            and energy_err < self.ENTER_ENERGY_ERR
+        )
+
+    def _lqr_torque(self, state: np.ndarray) -> float:
+        """Apply the discrete-time LQR feedback law around the upright equilibrium."""
+        err = self._state_error(state)
+        u = -float((self.K @ err.reshape(-1, 1)).item())
+        return self._clip(u, self.torque_limit)
+
+    def _outer_loop_torque(self, state: np.ndarray, t: float) -> float:
+        """Run startup departure, then blend pure energy pumping with terminal approach shaping."""
+        if not self._depart_done:
+            tau_depart = self._departure_torque(state, t)
+            if not self._depart_done:
+                self._mode = "depart"
+                return tau_depart
+
+        w = self._approach_weight(state)
+        tau_energy = self._energy_pump_torque(state)
+        tau_approach = self._approach_torque(state)
+        self._mode = "approach" if w > 0.5 else "energy"
+        tau = (1.0 - w) * tau_energy + w * tau_approach
+        return self._clip(tau, self.torque_limit)
 
     def _compute(self, state: np.ndarray, t: float) -> float:
+        """One-way latch: swing-up until capture, then LQR forever."""
         x = np.array(state, dtype=float)
 
-        if self._near_upright(x):
-            err = x - self.x_ref
-            err[0] = self._wrap_angle(err[0])
-            err[1] = self._wrap_angle(err[1])
-            u = -float((self.K @ err.reshape(-1, 1)).item())
-            mode = "LQR"
-        else:
-            u = self._swingup_torque(x)
-            mode = "SWING-UP"
+        if self._in_lqr:
+            self._mode = "lqr"
+            return self._lqr_torque(x)
 
-        if mode != self.mode:
-            print(f"Mode change to: {mode}")
-        self.mode = mode
+        if self._should_enter_lqr(x):
+            self._in_lqr = True
+            self._mode = "lqr"
+            return self._lqr_torque(x)
 
-        u = self._clip(u, self.torque_limit)
-
-
-        return u
+        return self._outer_loop_torque(x, t)

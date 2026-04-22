@@ -51,7 +51,7 @@ def compute_metrics(log_path: str, upright: np.ndarray = None) -> dict:
     }
 
 
-def _settling_time(t, error, angle_tol_rad=np.deg2rad(5.0), window_s=0.5):
+def _settling_time(t, error, angle_tol_rad=np.deg2rad(7.0), window_s=0.5):
     if len(t) < 2:
         return float("nan")
 

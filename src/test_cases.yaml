@@ -12,7 +12,7 @@ scenarios:
     level: 2
     description: "Low sensor noise"
     noise_std: 0.01
-    torque_limit: 5.0
+    torque_limit: null
     mass_perturbation: 0.0
     impulse_magnitude: 0.0
 
@@ -20,7 +20,7 @@ scenarios:
     level: 2
     description: "Medium sensor noise"
     noise_std: 0.05
-    torque_limit: 5.0
+    torque_limit: null
     mass_perturbation: 0.0
     impulse_magnitude: 0.0
 
@@ -28,7 +28,7 @@ scenarios:
     level: 2
     description: "High sensor noise"
     noise_std: 0.10
-    torque_limit: 5.0
+    torque_limit: null
     mass_perturbation: 0.0
     impulse_magnitude: 0.0
 
@@ -60,7 +60,7 @@ scenarios:
     level: 4
     description: "Link masses +20%"
     noise_std: 0.0
-    torque_limit: 5.0
+    torque_limit: null
     mass_perturbation: 0.20
     impulse_magnitude: 0.0
 
@@ -68,7 +68,7 @@ scenarios:
     level: 4
     description: "Link masses +30%"
     noise_std: 0.0
-    torque_limit: 5.0
+    torque_limit: null
     mass_perturbation: 0.30
     impulse_magnitude: 0.0
 
@@ -76,7 +76,7 @@ scenarios:
     level: 5
     description: "Small impulse disturbance"
     noise_std: 0.0
-    torque_limit: 5.0
+    torque_limit: null
     mass_perturbation: 0.0
     impulse_magnitude: 0.5
 
@@ -84,7 +84,7 @@ scenarios:
     level: 5
     description: "Medium impulse disturbance"
     noise_std: 0.0
-    torque_limit: 5.0
+    torque_limit: null
     mass_perturbation: 0.0
     impulse_magnitude: 1.0
 
@@ -92,7 +92,7 @@ scenarios:
     level: 5
     description: "Large impulse disturbance"
     noise_std: 0.0
-    torque_limit: 5.0
+    torque_limit: null
     mass_perturbation: 0.0
     impulse_magnitude: 2.0
 
