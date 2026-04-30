@@ -1,7 +1,7 @@
 import numpy as np
 import yaml
 from scipy.linalg import expm, solve_discrete_are
-
+import json, os
 from controllers.base_controller import BaseController
 from src.system_params import get_system_params, SystemParams
 
@@ -22,7 +22,7 @@ class LQRController(BaseController):
     DEPART_TIME = 0.22
     DEPART_TORQUE_FRAC = 0.38
 
-    ENERGY_GAIN = 0.60
+    ENERGY_GAIN = 0.6 #0.60
     ENERGY_SCALE = 1.20
     ENERGY_Q2_BIAS = 0.12
     ENERGY_Q2_DAMP = 0.08
@@ -42,10 +42,10 @@ class LQRController(BaseController):
         super().__init__(config)
         self.params = get_system_params(config)
         self.dt = 1.0 / config["simulation"].get("control_hz", config["simulation"]["physics_hz"])
-        # The sim dispatches _compute at ~400 Hz regardless of physics_hz, so pinning dt.
         self.dt = 0.0025
         self.x_ref = np.array(config["test"].get("target_state", [np.pi / 2, 0.0, 0.0, 0.0]), dtype=float)
         self.x_down = np.array(config["test"].get("initial_state", [-np.pi / 2, 0.0, 0.0, 0.0]), dtype=float)
+        self._config_log_path = config["simulation"].get("log_path", "log")
         self.torque_limit = self._read_torque_limit(config)
 
         self.Q = np.diag(self.LQR_Q_DIAG)
@@ -59,6 +59,11 @@ class LQRController(BaseController):
         self._depart_done = False
         self._in_lqr = False
         self._mode = "depart"
+
+        # switch telemetry — read by data collection after each run
+        self.switch_time: float = float("nan")
+        self.switch_torque: float = float("nan")
+        self.switch_state: np.ndarray = np.full(4, float("nan"))
 
     def _read_torque_limit(self, config: dict) -> float:
         """Read the active torque limit from the scenario and fall back to simulation defaults."""
@@ -265,6 +270,24 @@ class LQRController(BaseController):
         if self._should_enter_lqr(x):
             self._in_lqr = True
             self._mode = "lqr"
-            return self._lqr_torque(x)
+            tau = self._lqr_torque(x)
+            # record exact switch instant
+            self.switch_time   = t
+            self.switch_torque = abs(tau)
+            
+            sidecar = os.path.join(
+                self._config_log_path, f"lqr_switch_{os.getpid()}.json")
+            with open(sidecar, "w") as f:
+                json.dump({"switch_time": t,
+                        "switch_torque": abs(tau),
+                        "switch_state": x.tolist()}, f)
+            
+            self.switch_state  = x.copy()
+            return tau
 
         return self._outer_loop_torque(x, t)
+    
+    def _compute_pure(self, state: np.ndarray, t: float) -> float:
+        """One-way latch: swing-up until capture, then LQR forever."""
+        x = np.array(state, dtype=float)
+        return self._lqr_torque(x)

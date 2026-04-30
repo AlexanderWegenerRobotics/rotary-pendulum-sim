@@ -56,6 +56,11 @@ class Simulation:
         log_path = self.sim_cfg["log_path"]
         self.logger = Logger(log_path, controller_name, config)
 
+        self._camera = mujoco.MjvCamera()
+        mujoco.mjv_defaultFreeCamera(self.model, self._camera)
+        self._camera.lookat[2] += 0.3  # shift up in z, tune this value
+        self._camera.lookat[0] -= 0.3
+
         self._video_writer = None
         if self.video_log:
             self._init_video_writer(log_path)
@@ -132,7 +137,7 @@ class Simulation:
     def _render_frame(self):
         if self._renderer is None:
             return None
-        self._renderer.update_scene(self.data)
+        self._renderer.update_scene(self.data, camera=self._camera)
         frame = self._renderer.render()
         return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
